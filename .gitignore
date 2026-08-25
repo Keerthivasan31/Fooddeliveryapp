@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 .DS_Store
+
+node_modules/
+ecs-scaling-config.json
