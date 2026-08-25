@@ -1,0 +1,64 @@
+// CI/CD pipeline for the supported ECS Fargate deployment.
+pipeline {
+  agent any
+  parameters {
+    string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region')
+    string(name: 'ECS_CLUSTER_NAME', defaultValue: 'food-delivery-prod-cluster', description: 'Existing ECS cluster')
+    string(name: 'BASE_DOMAIN', defaultValue: 'fooddeliveryapp.com', description: 'Production base domain')
+    password(name: 'GOOGLE_MAPS_API_KEY', defaultValue: '', description: 'Browser-restricted Google Maps key')
+  }
+  environment {
+    AWS_ACCOUNT_ID = credentials('aws-account-id')
+    ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${params.AWS_REGION}.amazonaws.com"
+    IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
+    BACKENDS = 'auth-service order-service payment-service tracking-service catalog-service'
+    FRONTENDS = 'auth-app customer-app restaurant-app delivery-app admin-panel'
+  }
+  stages {
+    stage('Checkout') { steps { checkout scm } }
+    stage('Install / Build Frontends') {
+      steps { script {
+        env.FRONTENDS.split().each { app -> dir("apps/${app}") { sh 'npm install'; sh 'npm run build' } }
+      }}
+    }
+    stage('Backend Syntax Check') {
+      steps { script {
+        env.BACKENDS.split().each { svc -> dir("services/${svc}") { sh 'npm install'; sh "find src -name '*.js' -print0 | xargs -0 -n1 node --check" } }
+      }}
+    }
+    stage('ECR Login') {
+      steps { sh "aws ecr get-login-password --region ${params.AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}" }
+    }
+    stage('Build / Push Images') {
+      steps { script {
+        def api = "https://api.${params.BASE_DOMAIN}"
+        env.BACKENDS.split().each { svc ->
+          sh "docker build -t ${ECR_REGISTRY}/${svc}:${IMAGE_TAG} -t ${ECR_REGISTRY}/${svc}:latest services/${svc}"
+          sh "docker push ${ECR_REGISTRY}/${svc}:${IMAGE_TAG} && docker push ${ECR_REGISTRY}/${svc}:latest"
+        }
+        def args = [
+          'auth-app': "--build-arg VITE_CUSTOMER_APP_URL=https://customer.${params.BASE_DOMAIN} --build-arg VITE_RESTAURANT_APP_URL=https://restaurant.${params.BASE_DOMAIN} --build-arg VITE_DELIVERY_APP_URL=https://delivery.${params.BASE_DOMAIN} --build-arg VITE_ADMIN_APP_URL=https://admin.${params.BASE_DOMAIN}",
+          'customer-app': "--build-arg VITE_AUTH_API_URL=${api} --build-arg VITE_ORDER_SERVICE_URL=${api} --build-arg VITE_PAYMENT_SERVICE_URL=${api} --build-arg VITE_TRACKING_SERVICE_URL=${api} --build-arg VITE_CATALOG_SERVICE_URL=${api} --build-arg VITE_AUTH_APP_URL=https://auth.${params.BASE_DOMAIN} --build-arg VITE_RESTAURANT_ID=11111111-1111-1111-1111-111111111111 --build-arg VITE_GOOGLE_MAPS_API_KEY=${params.GOOGLE_MAPS_API_KEY}",
+          'restaurant-app': "--build-arg VITE_AUTH_API_URL=${api} --build-arg VITE_ORDER_SERVICE_URL=${api} --build-arg VITE_PAYMENT_SERVICE_URL=${api} --build-arg VITE_TRACKING_SERVICE_URL=${api} --build-arg VITE_CATALOG_SERVICE_URL=${api} --build-arg VITE_AUTH_APP_URL=https://auth.${params.BASE_DOMAIN} --build-arg VITE_RESTAURANT_ID=11111111-1111-1111-1111-111111111111",
+          'delivery-app': "--build-arg VITE_AUTH_API_URL=${api} --build-arg VITE_ORDER_SERVICE_URL=${api} --build-arg VITE_PAYMENT_SERVICE_URL=${api} --build-arg VITE_TRACKING_SERVICE_URL=${api} --build-arg VITE_AUTH_APP_URL=https://auth.${params.BASE_DOMAIN}",
+          'admin-panel': "--build-arg VITE_AUTH_API_URL=${api} --build-arg VITE_ORDER_SERVICE_URL=${api} --build-arg VITE_PAYMENT_SERVICE_URL=${api} --build-arg VITE_TRACKING_SERVICE_URL=${api} --build-arg VITE_CATALOG_SERVICE_URL=${api} --build-arg VITE_AUTH_APP_URL=https://auth.${params.BASE_DOMAIN}"
+        ]
+        env.FRONTENDS.split().each { app ->
+          sh "docker build ${args[app]} -t ${ECR_REGISTRY}/${app}:${IMAGE_TAG} -t ${ECR_REGISTRY}/${app}:latest apps/${app}"
+          sh "docker push ${ECR_REGISTRY}/${app}:${IMAGE_TAG} && docker push ${ECR_REGISTRY}/${app}:latest"
+        }
+      }}
+    }
+    stage('Deploy ECS') {
+      steps { script {
+        (env.BACKENDS.split() + env.FRONTENDS.split()).each { svc ->
+          sh "aws ecs update-service --cluster ${params.ECS_CLUSTER_NAME} --service ${svc} --force-new-deployment --region ${params.AWS_REGION}"
+        }
+      }}
+    }
+    stage('Wait Stable') {
+      steps { sh "aws ecs wait services-stable --cluster ${params.ECS_CLUSTER_NAME} --services ${env.BACKENDS} ${env.FRONTENDS} --region ${params.AWS_REGION}" }
+    }
+  }
+  post { always { sh 'docker system prune -f || true' } }
+}

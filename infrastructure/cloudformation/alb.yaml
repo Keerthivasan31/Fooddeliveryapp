@@ -1,0 +1,389 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: HTTPS Application Load Balancer for all Food Delivery frontend apps and APIs.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: food-delivery
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  ALBSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DomainName:
+    Type: String
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+
+Resources:
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub "*.${DomainName}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups:
+        - !Ref ALBSecurityGroupId
+
+  AuthAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+
+  CustomerTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+
+  RestaurantTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+
+  DeliveryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+
+  AdminTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /
+      Matcher:
+        HttpCode: "200-399"
+
+  AuthApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 4003
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200-399"
+
+  OrderApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 4000
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200-399"
+
+  PaymentApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 4001
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200-399"
+
+  TrackingApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 4002
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200-399"
+
+  CatalogApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 4004
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VpcId
+      HealthCheckPath: /health
+      Matcher:
+        HttpCode: "200-399"
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: "443"
+            StatusCode: HTTP_301
+
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref Certificate
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref CustomerTargetGroup
+
+  AuthAppRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 10
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub auth.${DomainName}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthAppTargetGroup
+
+  CustomerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 20
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub customer.${DomainName}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref CustomerTargetGroup
+
+  RestaurantRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 30
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub restaurant.${DomainName}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref RestaurantTargetGroup
+
+  DeliveryRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 40
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub delivery.${DomainName}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref DeliveryTargetGroup
+
+  AdminRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 50
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub admin.${DomainName}
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AdminTargetGroup
+
+  ApiHealthRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 90
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /health
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthApiTargetGroup
+
+  AuthApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 100
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/auth*
+              - /api/users*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthApiTargetGroup
+
+  OrderApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 110
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/orders*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref OrderApiTargetGroup
+
+  PaymentApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 120
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/payments*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref PaymentApiTargetGroup
+
+  TrackingApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 130
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/tracking*
+              - /socket.io*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref TrackingApiTargetGroup
+
+  CatalogApiRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 140
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values:
+              - !Sub api.${DomainName}
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /api/restaurants*
+              - /api/menu*
+              - /api/uploads*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref CatalogApiTargetGroup
+
+Outputs:
+  LoadBalancerDNS:
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+  LoadBalancerArn:
+    Value: !Ref ApplicationLoadBalancer
+  LoadBalancerFullName:
+    Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+  LoadBalancerHostedZoneId:
+    Value: !GetAtt ApplicationLoadBalancer.CanonicalHostedZoneID
+  CertificateArn:
+    Value: !Ref Certificate
+  AuthAppTargetGroupArn:
+    Value: !Ref AuthAppTargetGroup
+  AuthApiTargetGroupArn:
+    Value: !Ref AuthApiTargetGroup
+  OrderApiTargetGroupArn:
+    Value: !Ref OrderApiTargetGroup
+  PaymentApiTargetGroupArn:
+    Value: !Ref PaymentApiTargetGroup
+  TrackingApiTargetGroupArn:
+    Value: !Ref TrackingApiTargetGroup
+  CatalogApiTargetGroupArn:
+    Value: !Ref CatalogApiTargetGroup
+  CustomerTargetGroupArn:
+    Value: !Ref CustomerTargetGroup
+  RestaurantTargetGroupArn:
+    Value: !Ref RestaurantTargetGroup
+  DeliveryTargetGroupArn:
+    Value: !Ref DeliveryTargetGroup
+  AdminTargetGroupArn:
+    Value: !Ref AdminTargetGroup

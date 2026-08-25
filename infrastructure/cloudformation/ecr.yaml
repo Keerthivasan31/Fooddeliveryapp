@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECR repositories for all Food Delivery backend services and frontend apps.
+
+Resources:
+  AuthServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: auth-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  OrderServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: order-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  PaymentServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: payment-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  TrackingServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: tracking-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  CatalogServiceRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: catalog-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  AuthAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: auth-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  CustomerAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: customer-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  RestaurantAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: restaurant-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  DeliveryAppRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: delivery-app
+      ImageScanningConfiguration:
+        ScanOnPush: true
+  AdminPanelRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      EmptyOnDelete: true
+      RepositoryName: admin-panel
+      ImageScanningConfiguration:
+        ScanOnPush: true

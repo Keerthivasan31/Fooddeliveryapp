@@ -1,0 +1,53 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RDS PostgreSQL instance for the order database, in private subnets.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: food-delivery
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  DBSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  DBUsername:
+    Type: String
+    Default: orders_user
+  DBPassword:
+    Type: String
+    NoEcho: true
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+
+Resources:
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for RDS
+      SubnetIds: !Ref PrivateSubnetIds
+
+  OrdersDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-orders-db
+      Engine: postgres
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DBName: orders_db
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroupId
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 1
+      StorageEncrypted: true
+
+Outputs:
+  DBEndpoint:
+    Value: !GetAtt OrdersDatabase.Endpoint.Address
+  DBPort:
+    Value: !GetAtt OrdersDatabase.Endpoint.Port

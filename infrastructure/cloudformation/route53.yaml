@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Route 53 hosted zone record pointing the app domain at the ALB.
+
+Parameters:
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  DomainName:
+    Type: String
+    Default: fooddeliveryapp.com
+  ALBDnsName:
+    Type: String
+  ALBHostedZoneId:
+    Type: String
+    Description: The ALB's own canonical hosted zone ID (from ELB console/API, differs by region)
+
+Resources:
+  AppDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !Ref ALBDnsName
+        HostedZoneId: !Ref ALBHostedZoneId
+        EvaluateTargetHealth: true
+
+  WildcardAppDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "*.${DomainName}"
+      Type: A
+      AliasTarget:
+        DNSName: !Ref ALBDnsName
+        HostedZoneId: !Ref ALBHostedZoneId
+        EvaluateTargetHealth: true

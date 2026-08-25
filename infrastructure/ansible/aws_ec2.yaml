@@ -1,0 +1,13 @@
+# Dynamic inventory plugin config - discovers backend EC2 instances by tag
+# instead of hardcoding IPs. Run with: ansible-inventory -i aws_ec2.yaml --graph
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+filters:
+  tag:Role: backend-server
+  instance-state-name: running
+keyed_groups:
+  - key: tags.Environment
+    prefix: env
+hostnames:
+  - private-ip-address

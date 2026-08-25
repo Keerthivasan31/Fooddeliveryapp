@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Root stack for the Food Delivery Platform. Deploy in two phases: infrastructure/ECR, then ECS applications."
+
+Parameters:
+  EnvironmentName: { Type: String, Default: food-delivery-prod }
+  TemplateBucket:
+    Type: String
+    Description: S3 bucket containing the nested CloudFormation templates.
+  DBPassword: { Type: String, NoEcho: true, MinLength: 8 }
+  JwtSecret: { Type: String, NoEcho: true, MinLength: 32 }
+  AdminPassword: { Type: String, NoEcho: true, MinLength: 8 }
+  FrontendBaseDomain: { Type: String, Default: fooddeliveryapp.com }
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: Route 53 public hosted zone for FrontendBaseDomain.
+  DeployApplication:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: First deploy false to create ECR/infrastructure; after images are pushed update with true.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 4
+  NotificationEmail:
+    Type: String
+    Default: ""
+
+Conditions:
+  DeployApplicationCondition: !Equals [!Ref DeployApplication, "true"]
+
+Resources:
+  DBPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      {
+        Name: !Sub "${EnvironmentName}/db-password",
+        SecretString: !Ref DBPassword,
+      }
+  JwtSecretResource:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      {
+        Name: !Sub "${EnvironmentName}/jwt-secret",
+        SecretString: !Ref JwtSecret,
+      }
+  AdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      {
+        Name: !Sub "${EnvironmentName}/admin-password",
+        SecretString: !Ref AdminPassword,
+      }
+
+  AcmCAARecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref FrontendBaseDomain
+      Type: CAA
+      TTL: 300
+      ResourceRecords:
+        - '0 issue "amazon.com"'
+        - '0 issuewild "amazon.com"'
+
+  VpcStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/vpc.yaml"
+      Parameters: { EnvironmentName: !Ref EnvironmentName }
+
+  AlbStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - VpcStack
+      - AcmCAARecord
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/alb.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt VpcStack.Outputs.VpcId
+        PublicSubnetIds: !GetAtt VpcStack.Outputs.PublicSubnets
+        ALBSecurityGroupId: !GetAtt VpcStack.Outputs.ALBSecurityGroupId
+        DomainName: !Ref FrontendBaseDomain
+        HostedZoneId: !Ref HostedZoneId
+
+  Route53Stack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: AlbStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/route53.yaml"
+      Parameters:
+        HostedZoneId: !Ref HostedZoneId
+        DomainName: !Ref FrontendBaseDomain
+        ALBDnsName: !GetAtt AlbStack.Outputs.LoadBalancerDNS
+        ALBHostedZoneId: !GetAtt AlbStack.Outputs.LoadBalancerHostedZoneId
+
+  RdsStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VpcStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/rds.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        PrivateSubnetIds: !GetAtt VpcStack.Outputs.PrivateSubnets
+        DBSecurityGroupId: !GetAtt VpcStack.Outputs.DBSecurityGroupId
+        DBPassword: !Ref DBPassword
+
+  S3Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/s3-storage.yaml"
+      Parameters: { EnvironmentName: !Ref EnvironmentName }
+
+  SnsStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/sns-order-alerts.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        DomainName: !Ref FrontendBaseDomain
+        NotificationEmail: !Ref NotificationEmail
+
+  EcrStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/ecr.yaml"
+
+  CloudTrailStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/cloudtrail.yaml"
+      Parameters: { EnvironmentName: !Ref EnvironmentName }
+
+  CloudWatchStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: AlbStack
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/cloudwatch-monitoring.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        ALBFullName: !GetAtt AlbStack.Outputs.LoadBalancerFullName
+
+  EcsApplicationStack:
+    Type: AWS::CloudFormation::Stack
+    Condition: DeployApplicationCondition
+    DependsOn: [VpcStack, AlbStack, RdsStack, S3Stack, SnsStack, EcrStack]
+    Properties:
+      TemplateURL: !Sub "https://${TemplateBucket}.s3.${AWS::Region}.amazonaws.com/ecs-frontend.yaml"
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        PrivateSubnetIds: !GetAtt VpcStack.Outputs.PrivateSubnets
+        AppSecurityGroupId: !GetAtt VpcStack.Outputs.AppSecurityGroupId
+        DBEndpoint: !GetAtt RdsStack.Outputs.DBEndpoint
+        OrderAlertsTopicArn: !GetAtt SnsStack.Outputs.TopicArn
+        JwtSecretSecretArn: !Ref JwtSecretResource
+        DBPasswordSecretArn: !Ref DBPasswordSecret
+        AdminPasswordSecretArn: !Ref AdminPasswordSecret
+        FrontendBaseDomain: !Ref FrontendBaseDomain
+        S3BucketName: !GetAtt S3Stack.Outputs.BucketName
+        DesiredCount: !Ref DesiredCount
+        AuthAppTargetGroupArn: !GetAtt AlbStack.Outputs.AuthAppTargetGroupArn
+        AuthApiTargetGroupArn: !GetAtt AlbStack.Outputs.AuthApiTargetGroupArn
+        OrderApiTargetGroupArn: !GetAtt AlbStack.Outputs.OrderApiTargetGroupArn
+        PaymentApiTargetGroupArn: !GetAtt AlbStack.Outputs.PaymentApiTargetGroupArn
+        TrackingApiTargetGroupArn: !GetAtt AlbStack.Outputs.TrackingApiTargetGroupArn
+        CatalogApiTargetGroupArn: !GetAtt AlbStack.Outputs.CatalogApiTargetGroupArn
+        CustomerTargetGroupArn: !GetAtt AlbStack.Outputs.CustomerTargetGroupArn
+        RestaurantTargetGroupArn: !GetAtt AlbStack.Outputs.RestaurantTargetGroupArn
+        DeliveryTargetGroupArn: !GetAtt AlbStack.Outputs.DeliveryTargetGroupArn
+        AdminTargetGroupArn: !GetAtt AlbStack.Outputs.AdminTargetGroupArn
+        AuthAppImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/auth-app:latest"
+        AuthServiceImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/auth-service:latest"
+        OrderServiceImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/order-service:latest"
+        PaymentServiceImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/payment-service:latest"
+        TrackingServiceImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/tracking-service:latest"
+        CatalogServiceImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/catalog-service:latest"
+        CustomerImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/customer-app:latest"
+        RestaurantImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/restaurant-app:latest"
+        DeliveryImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/delivery-app:latest"
+        AdminImageUri: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/admin-panel:latest"
+
+Outputs:
+  ALBDnsName: { Value: !GetAtt AlbStack.Outputs.LoadBalancerDNS }
+  RDSEndpoint: { Value: !GetAtt RdsStack.Outputs.DBEndpoint }
+  FoodImagesBucket: { Value: !GetAtt S3Stack.Outputs.BucketName }
+  OrderAlertsTopicArn: { Value: !GetAtt SnsStack.Outputs.TopicArn }
+  CertificateArn: { Value: !GetAtt AlbStack.Outputs.CertificateArn }
+  ECSClusterName:
+    Condition: DeployApplicationCondition
+    Value: !GetAtt EcsApplicationStack.Outputs.ECSClusterName

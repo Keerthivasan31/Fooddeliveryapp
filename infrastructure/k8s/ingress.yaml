@@ -1,0 +1,48 @@
+# Requires the AWS Load Balancer Controller installed on the EKS cluster.
+# This provisions an ALB that fronts the Kubernetes backend services,
+# matching the "Application Load Balancer -> Backend Kubernetes Services" architecture layer.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: food-delivery-ingress
+  namespace: food-delivery
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}, {"HTTP":80}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+spec:
+  rules:
+    - host: api.fooddeliveryapp.com
+      http:
+        paths:
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 4003
+          - path: /api/orders
+            pathType: Prefix
+            backend:
+              service:
+                name: order-service
+                port:
+                  number: 4000
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payment-service
+                port:
+                  number: 4001
+          - path: /api/tracking
+            pathType: Prefix
+            backend:
+              service:
+                name: tracking-service
+                port:
+                  number: 4002

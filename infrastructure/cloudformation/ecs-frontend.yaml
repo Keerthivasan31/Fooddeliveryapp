@@ -1,0 +1,526 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ECS Fargate cluster for all Food Delivery frontend and backend services.
+
+Parameters:
+  EnvironmentName: {Type: String, Default: food-delivery}
+  PrivateSubnetIds: {Type: 'List<AWS::EC2::Subnet::Id>'}
+  AppSecurityGroupId: {Type: 'AWS::EC2::SecurityGroup::Id'}
+  DBEndpoint: {Type: String}
+  DBUser: {Type: String, Default: orders_user}
+  DBName: {Type: String, Default: orders_db}
+  OrderAlertsTopicArn: {Type: String}
+  JwtSecretSecretArn: {Type: String}
+  DBPasswordSecretArn: {Type: String}
+  AdminPasswordSecretArn: {Type: String}
+  FrontendBaseDomain: {Type: String, Default: fooddeliveryapp.com}
+  S3BucketName: {Type: String}
+  DesiredCount: {Type: Number, Default: 1, MinValue: 1, MaxValue: 4}
+  AuthAppTargetGroupArn: {Type: String}
+  AuthApiTargetGroupArn: {Type: String}
+  OrderApiTargetGroupArn: {Type: String}
+  PaymentApiTargetGroupArn: {Type: String}
+  TrackingApiTargetGroupArn: {Type: String}
+  CatalogApiTargetGroupArn: {Type: String}
+  CustomerTargetGroupArn: {Type: String}
+  RestaurantTargetGroupArn: {Type: String}
+  DeliveryTargetGroupArn: {Type: String}
+  AdminTargetGroupArn: {Type: String}
+  AuthAppImageUri: {Type: String}
+  AuthServiceImageUri: {Type: String}
+  OrderServiceImageUri: {Type: String}
+  PaymentServiceImageUri: {Type: String}
+  TrackingServiceImageUri: {Type: String}
+  CatalogServiceImageUri: {Type: String}
+  CustomerImageUri: {Type: String}
+  RestaurantImageUri: {Type: String}
+  DeliveryImageUri: {Type: String}
+  AdminImageUri: {Type: String}
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-cluster
+      ClusterSettings: [{Name: containerInsights, Value: enabled}]
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy]
+      Policies:
+        - PolicyName: ReadFoodDeliverySecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['secretsmanager:GetSecretValue']
+                Resource: [!Ref JwtSecretSecretArn, !Ref DBPasswordSecretArn, !Ref AdminPasswordSecretArn]
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement: [{Effect: Allow, Principal: {Service: ecs-tasks.amazonaws.com}, Action: 'sts:AssumeRole'}]
+      Policies:
+        - PolicyName: OrderAlertsPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement: [{Effect: Allow, Action: 'sns:Publish', Resource: !Ref OrderAlertsTopicArn}]
+        - PolicyName: FoodImagesS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ['s3:GetObject','s3:PutObject']
+                Resource: !Sub arn:aws:s3:::${S3BucketName}/*
+
+  AuthLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/auth-service', RetentionInDays: 14}}
+  OrderLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/order-service', RetentionInDays: 14}}
+  PaymentLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/payment-service', RetentionInDays: 14}}
+  TrackingLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/tracking-service', RetentionInDays: 14}}
+  CatalogLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/catalog-service', RetentionInDays: 14}}
+  AuthAppLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/auth-app', RetentionInDays: 14}}
+  CustomerLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/customer-app', RetentionInDays: 14}}
+  RestaurantLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/restaurant-app', RetentionInDays: 14}}
+  DeliveryLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/delivery-app', RetentionInDays: 14}}
+  AdminLogGroup: {Type: 'AWS::Logs::LogGroup', Properties: {LogGroupName: !Sub '/ecs/${EnvironmentName}/admin-panel', RetentionInDays: 14}}
+
+  AuthTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-auth-service
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: auth-service
+          Image: !Ref AuthServiceImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 4003, Protocol: tcp}]
+          Environment:
+            - {Name: PORT, Value: '4003'}
+            - {Name: DB_HOST, Value: !Ref DBEndpoint}
+            - {Name: DB_PORT, Value: '5432'}
+            - {Name: DB_USER, Value: !Ref DBUser}
+            - {Name: DB_NAME, Value: !Ref DBName}
+            - {Name: DB_SSL, Value: 'true'}
+            - {Name: S3_BUCKET, Value: !Ref S3BucketName}
+            - {Name: AWS_REGION, Value: !Ref 'AWS::Region'}
+            - {Name: PUBLIC_BASE_URL, Value: !Sub 'https://api.${FrontendBaseDomain}'}
+            - {Name: ADMIN_EMAIL, Value: !Sub 'admin@${FrontendBaseDomain}'}
+            - {Name: CORS_ORIGINS, Value: !Sub 'https://${FrontendBaseDomain},https://auth.${FrontendBaseDomain},https://customer.${FrontendBaseDomain},https://restaurant.${FrontendBaseDomain},https://delivery.${FrontendBaseDomain},https://admin.${FrontendBaseDomain}'}
+          Secrets:
+            - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecretSecretArn}
+            - {Name: DB_PASSWORD, ValueFrom: !Ref DBPasswordSecretArn}
+            - {Name: ADMIN_PASSWORD, ValueFrom: !Ref AdminPasswordSecretArn}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref AuthLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost:4003/health >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 30}
+
+  OrderTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-order-service
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: order-service
+          Image: !Ref OrderServiceImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 4000}]
+          Environment:
+            - {Name: PORT, Value: '4000'}
+            - {Name: DB_HOST, Value: !Ref DBEndpoint}
+            - {Name: DB_PORT, Value: '5432'}
+            - {Name: DB_USER, Value: !Ref DBUser}
+            - {Name: DB_NAME, Value: !Ref DBName}
+            - {Name: DB_SSL, Value: 'true'}
+            - {Name: AWS_REGION, Value: !Ref 'AWS::Region'}
+            - {Name: ORDER_ALERTS_TOPIC_ARN, Value: !Ref OrderAlertsTopicArn}
+            - {Name: CORS_ORIGINS, Value: !Sub 'https://${FrontendBaseDomain},https://customer.${FrontendBaseDomain},https://restaurant.${FrontendBaseDomain},https://delivery.${FrontendBaseDomain},https://admin.${FrontendBaseDomain}'}
+          Secrets: [{Name: DB_PASSWORD, ValueFrom: !Ref DBPasswordSecretArn}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref OrderLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost:4000/health >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 30}
+
+  PaymentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-payment-service
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: payment-service
+          Image: !Ref PaymentServiceImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 4001}]
+          Environment:
+            - {Name: PORT, Value: '4001'}
+            - {Name: ORDER_SERVICE_URL, Value: !Sub 'https://api.${FrontendBaseDomain}'}
+            - {Name: CORS_ORIGINS, Value: !Sub 'https://${FrontendBaseDomain},https://customer.${FrontendBaseDomain},https://delivery.${FrontendBaseDomain},https://admin.${FrontendBaseDomain}'}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref PaymentLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost:4001/health >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 30}
+
+  TrackingTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-tracking-service
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: tracking-service
+          Image: !Ref TrackingServiceImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 4002}]
+          Environment:
+            - {Name: PORT, Value: '4002'}
+            - {Name: CORS_ORIGINS, Value: !Sub 'https://${FrontendBaseDomain},https://customer.${FrontendBaseDomain},https://delivery.${FrontendBaseDomain},https://admin.${FrontendBaseDomain}'}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref TrackingLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost:4002/health >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 30}
+
+  CatalogTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-catalog-service
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ContainerDefinitions:
+        - Name: catalog-service
+          Image: !Ref CatalogServiceImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 4004}]
+          Environment:
+            - {Name: PORT, Value: '4004'}
+            - {Name: DB_HOST, Value: !Ref DBEndpoint}
+            - {Name: DB_PORT, Value: '5432'}
+            - {Name: DB_USER, Value: !Ref DBUser}
+            - {Name: DB_NAME, Value: !Ref DBName}
+            - {Name: DB_SSL, Value: 'true'}
+            - {Name: S3_BUCKET, Value: !Ref S3BucketName}
+            - {Name: AWS_REGION, Value: !Ref 'AWS::Region'}
+            - {Name: PUBLIC_BASE_URL, Value: !Sub 'https://api.${FrontendBaseDomain}'}
+            - {Name: CORS_ORIGINS, Value: !Sub 'https://${FrontendBaseDomain},https://customer.${FrontendBaseDomain},https://restaurant.${FrontendBaseDomain},https://admin.${FrontendBaseDomain}'}
+          Secrets:
+            - {Name: DB_PASSWORD, ValueFrom: !Ref DBPasswordSecretArn}
+            - {Name: JWT_SECRET, ValueFrom: !Ref JwtSecretSecretArn}
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref CatalogLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost:4004/health >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 30}
+
+  AuthAppTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-auth-app
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: auth-app
+          Image: !Ref AuthAppImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 80}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref AuthAppLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost/ >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 15}
+
+  CustomerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-customer-app
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: customer-app
+          Image: !Ref CustomerImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 80}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref CustomerLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost/ >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 15}
+
+  RestaurantTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-restaurant-app
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: restaurant-app
+          Image: !Ref RestaurantImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 80}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref RestaurantLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost/ >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 15}
+
+  DeliveryTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-delivery-app
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: delivery-app
+          Image: !Ref DeliveryImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 80}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref DeliveryLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost/ >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 15}
+
+  AdminTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-admin-panel
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: admin-panel
+          Image: !Ref AdminImageUri
+          Essential: true
+          PortMappings: [{ContainerPort: 80}]
+          LogConfiguration: {LogDriver: awslogs, Options: {awslogs-group: !Ref AdminLogGroup, awslogs-region: !Ref 'AWS::Region', awslogs-stream-prefix: ecs}}
+          HealthCheck: {Command: [CMD-SHELL, 'wget -qO- http://localhost/ >/dev/null || exit 1'], Interval: 30, Timeout: 5, Retries: 3, StartPeriod: 15}
+
+  AuthService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: auth-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref AuthTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: auth-service, ContainerPort: 4003, TargetGroupArn: !Ref AuthApiTargetGroupArn}]
+
+  OrderService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: order-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref OrderTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: order-service, ContainerPort: 4000, TargetGroupArn: !Ref OrderApiTargetGroupArn}]
+
+  PaymentService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: payment-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref PaymentTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: payment-service, ContainerPort: 4001, TargetGroupArn: !Ref PaymentApiTargetGroupArn}]
+
+  TrackingService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: tracking-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TrackingTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: tracking-service, ContainerPort: 4002, TargetGroupArn: !Ref TrackingApiTargetGroupArn}]
+
+  CatalogService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: catalog-service
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref CatalogTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: catalog-service, ContainerPort: 4004, TargetGroupArn: !Ref CatalogApiTargetGroupArn}]
+
+  AuthAppService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: auth-app
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref AuthAppTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: auth-app, ContainerPort: 80, TargetGroupArn: !Ref AuthAppTargetGroupArn}]
+
+  CustomerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: customer-app
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref CustomerTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: customer-app, ContainerPort: 80, TargetGroupArn: !Ref CustomerTargetGroupArn}]
+
+  RestaurantService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: restaurant-app
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref RestaurantTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: restaurant-app, ContainerPort: 80, TargetGroupArn: !Ref RestaurantTargetGroupArn}]
+
+  DeliveryService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: delivery-app
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref DeliveryTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: delivery-app, ContainerPort: 80, TargetGroupArn: !Ref DeliveryTargetGroupArn}]
+
+  AdminService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: admin-panel
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref AdminTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      DeploymentConfiguration:
+        DeploymentCircuitBreaker: {Enable: true, Rollback: true}
+        MinimumHealthyPercent: 50
+        MaximumPercent: 200
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref AppSecurityGroupId]
+          AssignPublicIp: DISABLED
+      LoadBalancers: [{ContainerName: admin-panel, ContainerPort: 80, TargetGroupArn: !Ref AdminTargetGroupArn}]
+
+Outputs:
+  ECSClusterName: {Value: !Ref ECSCluster}
+  AuthServiceName: {Value: !Ref AuthService}
+  OrderServiceName: {Value: !Ref OrderService}
+  PaymentServiceName: {Value: !Ref PaymentService}
+  TrackingServiceName: {Value: !Ref TrackingService}
+  CatalogServiceName: {Value: !Ref CatalogService}
+  AuthAppServiceName: {Value: !Ref AuthAppService}
+  CustomerServiceName: {Value: !Ref CustomerService}
+  RestaurantServiceName: {Value: !Ref RestaurantService}
+  DeliveryServiceName: {Value: !Ref DeliveryService}
+  AdminServiceName: {Value: !Ref AdminService}

@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SNS topic for order alerts, subscribed to by the order-notifier Lambda.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: food-delivery
+  DomainName:
+    Type: String
+    Default: fooddeliveryapp.com
+  NotificationEmail:
+    Type: String
+    Default: ""
+
+Resources:
+  OrderAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${EnvironmentName}-order-alerts
+
+  OrderNotifierFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-order-notifier
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 15
+      Code:
+        ZipFile: |
+          const { SESClient, SendEmailCommand } = require('@aws-sdk/client-ses');
+          const ses = new SESClient({ region: process.env.AWS_REGION });
+          exports.handler = async (event) => {
+            for (const record of event.Records || []) {
+              let message;
+              try { message = JSON.parse(record.Sns.Message); } catch { message = { eventType: 'ORDER_EVENT', order: {} }; }
+              const order = message.order || {};
+              const subject = `${message.eventType || 'Order Notification'} - #${String(order.id || '').slice(0, 8)}`;
+              const body = `Food delivery order ${order.id || 'unknown'} status: ${order.status || 'updated'}.`;
+              if (process.env.NOTIFICATION_EMAIL) {
+                await ses.send(new SendEmailCommand({
+                  Source: process.env.SES_SOURCE_EMAIL,
+                  Destination: { ToAddresses: [process.env.NOTIFICATION_EMAIL] },
+                  Message: { Subject: { Data: subject }, Body: { Text: { Data: body } } }
+                }));
+              } else {
+                console.log({ subject, body, dryRun: true });
+              }
+            }
+            return { statusCode: 200 };
+          };
+      Environment:
+        Variables:
+          NOTIFICATION_EMAIL: !Ref NotificationEmail
+          SES_SOURCE_EMAIL: !Sub "no-reply@${DomainName}"
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SESSendEmail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource: "*"
+
+  LambdaSNSPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OrderNotifierFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref OrderAlertsTopic
+
+  LambdaSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref OrderAlertsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt OrderNotifierFunction.Arn
+
+Outputs:
+  TopicArn:
+    Value: !Ref OrderAlertsTopic

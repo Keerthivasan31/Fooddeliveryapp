@@ -1,0 +1,7 @@
+---
+- name: Configure backend servers for Food Delivery Platform
+  hosts: backend_servers
+  become: true
+  roles:
+    - docker-setup
+    - app-config

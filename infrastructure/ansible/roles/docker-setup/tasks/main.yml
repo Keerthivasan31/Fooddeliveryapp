@@ -1,0 +1,35 @@
+---
+- name: Install prerequisite packages
+  yum:
+    name:
+      - yum-utils
+      - device-mapper-persistent-data
+      - lvm2
+    state: present
+  become: true
+
+- name: Add Docker CE repository
+  get_url:
+    url: https://download.docker.com/linux/centos/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+  become: true
+
+- name: Install Docker
+  yum:
+    name: docker-ce
+    state: present
+  become: true
+
+- name: Ensure docker service is running and enabled
+  service:
+    name: docker
+    state: started
+    enabled: true
+  become: true
+
+- name: Add ec2-user to docker group
+  user:
+    name: ec2-user
+    groups: docker
+    append: true
+  become: true

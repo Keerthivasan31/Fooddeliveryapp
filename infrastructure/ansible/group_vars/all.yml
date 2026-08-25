@@ -1,0 +1,6 @@
+aws_region: us-east-1
+ecr_registry: "xxxxxxxxxxxx.dkr.ecr.us-east-1.amazonaws.com"
+db_host: "orders-db.xxxxx.us-east-1.rds.amazonaws.com"
+db_user: "orders_user"
+db_password: "{{ vault_db_password }}"   # store in ansible-vault, never plaintext
+db_name: "orders_db"
