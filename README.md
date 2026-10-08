@@ -1,352 +1,266 @@
-# Food Delivery Platform — Corrected AWS Build
+<div align="center">
 
-> **Start here:** `AWS-DEPLOYMENT-GUIDE.md` is the supported beginning-to-end AWS procedure. `FIX-REPORT.md` lists the production/deployment fixes applied to this package. The supported deployment uses ECS Fargate for all 5 frontend apps and all 5 backend services.
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:07152e,45:0754a7,100:00c9a7&height=220&section=header&text=FOOD%20DELIVERY%20PLATFORM&fontSize=38&fontColor=ffffff&fontAlignY=35&desc=AWS%20DevOps%20%7C%20Microservices%20%7C%20Cloud%20Infrastructure&descSize=17&descAlignY=58&animation=fadeIn" alt="Food Delivery Platform banner" width="100%" />
 
-# Food Delivery Microservices Platform
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=21&duration=2800&pause=900&color=18C7FF&center=true&vCenter=true&width=850&lines=Build+%E2%86%92+Test+%E2%86%92+Containerize+%E2%86%92+Deploy;10+Applications+%7C+Docker+%7C+AWS+ECS+Fargate;Jenkins+CI%2FCD+%7C+CloudFormation+%7C+CloudWatch;From+Local+Development+to+AWS+Architecture" alt="Animated project headline" /></a>
 
-## Local functional test flow
+<br />
 
-Frontend ports for local Docker testing:
+![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?style=for-the-badge&logo=amazonwebservices&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containers-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Jenkins](https://img.shields.io/badge/Jenkins-CI%2FCD-D24939?style=for-the-badge&logo=jenkins&logoColor=white)
+![ECS](https://img.shields.io/badge/Amazon_ECS-Fargate-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
+![React](https://img.shields.io/badge/React-Vite-61DAFB?style=for-the-badge&logo=react&logoColor=111827)
 
-- Auth: http://localhost:9000
-- Customer: http://localhost:9001
-- Restaurant: http://localhost:9002
-- Delivery: http://localhost:9003
-- Admin: http://localhost:9004
+**A role-based food ordering, restaurant management and delivery-tracking system with an AWS deployment blueprint.**
 
-Backend ports:
+[Overview](#-project-overview) · [Architecture](#-architecture) · [Applications](#-applications--services) · [Quick Start](#-quick-start) · [CI/CD](#-cicd--aws-deployment) · [Testing](#-end-to-end-test-flow)
 
-- Order service: http://localhost:4000
-- Payment service: http://localhost:4001
-- Tracking service: http://localhost:4002
-- Auth service: http://localhost:4003
-- PostgreSQL: localhost:5432
+</div>
 
-The local demo restaurant uses the UUID `11111111-1111-1111-1111-111111111111`. Customer and restaurant applications use this same value so a placed order appears in the restaurant app.
+---
 
-#
-## Safe Test Payment Mode
+## ✨ Project Overview
 
-The local payment service is intentionally **not a real payment processor**. It behaves like a gateway for demo/testing purposes:
+This project combines **five independent frontend applications** and **five Node.js/Express backend microservices**. It demonstrates local Docker Compose development and a corrected AWS deployment design using **Amazon ECS Fargate** for all ten application containers.
 
-- `REQUIRES_CONFIRMATION` → `PROCESSING` → `SUCCEEDED` or `FAILED`
-- Verifies the payment amount against the order total
-- Generates a `TEST-TXN-...` transaction ID for successful tests
-- Supports deterministic decline, insufficient-funds and processing-error scenarios
-- Supports retry and simulated refund flows
-- Stores only masked card data (`cardLast4`); never stores a full card number or CVV
-- Clearly labels the customer checkout as **TEST MODE — NO REAL PAYMENT**
+> [!IMPORTANT]
+> **Recommended AWS instructions:** Follow [`AWS-DEPLOYMENT-GUIDE-FIXED.md`](AWS-DEPLOYMENT-GUIDE-FIXED.md) and review [`FIX-REPORT.md`](FIX-REPORT.md) where available in your repository. Older sections of the original README described an EKS-based default; **EKS is optional**, not the corrected default deployment.
 
-Test cards:
+> [!NOTE]
+> This README describes the project's components and intended deployment workflow. It does **not** claim that the AWS production stack, DNS, HTTPS endpoint or CI/CD pipeline is currently live or verified.
 
-| Card | Result |
-|---|---|
-| `4242 4242 4242 4242` | Success |
-| `4000 0000 0000 0002` | Declined |
-| `4000 0000 0000 9995` | Insufficient funds |
-| `4000 0000 0000 9987` | Processing error |
+### 🌟 Feature highlights
 
-## Start locally
+- 🔐 **Role-based authentication** — separate customer, restaurant, delivery and admin journeys; JWT and bcrypt in the auth layer.
+- 🍔 **Food catalog** — restaurant and menu management, item images, prices and availability.
+- 🛒 **Customer ordering** — cart, checkout, profile, saved addresses and order history.
+- 🧑‍🍳 **Restaurant operations** — incoming orders and status progression.
+- 🛵 **Delivery tracking** — delivery assignment and Socket.IO location updates.
+- 🧰 **Admin management** — restaurant and food CRUD, image upload and platform order visibility.
+- 💳 **Safe payment simulation** — success, failure, retries and refund scenarios; **no real charges**.
+- ☁️ **AWS deployment design** — ALB, Route 53, ACM, ECS, ECR, RDS, S3, Secrets Manager, SNS/Lambda, CloudWatch and CloudTrail.
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    U[Users / Browsers] --> DNS[Amazon Route 53]
+    DNS --> TLS[AWS Certificate Manager / HTTPS]
+    TLS --> ALB[Application Load Balancer]
+    ALB --> FE[5 React Frontend Apps on ECS Fargate]
+    ALB --> API[5 Node.js Backend Services on ECS Fargate]
+    FE -->|Public API hostname| ALB
+    API --> DB[(Amazon RDS / PostgreSQL)]
+    API --> S3[(Amazon S3 / Images)]
+    API --> SNS[Amazon SNS]
+    SNS --> L[AWS Lambda / Notifications]
+    FE -. Logs .-> CW[Amazon CloudWatch]
+    API -. Logs .-> CW
+    CT[Amazon CloudTrail] -. AWS audit events .-> ALB
+    ECR[Amazon ECR / Images] --> FE
+    ECR --> API
+    CF[AWS CloudFormation] -. Provisions .-> ALB
+    CF -. Provisions .-> DB
+    classDef edge fill:#143f75,color:#fff,stroke:#38bdf8
+    classDef compute fill:#064e3b,color:#fff,stroke:#34d399
+    classDef data fill:#533078,color:#fff,stroke:#c084fc
+    class DNS,TLS,ALB edge
+    class FE,API,ECR compute
+    class DB,S3 data
+```
+
+**Deployment topology:** `auth.*`, `customer.*`, `restaurant.*`, `delivery.*`, `admin.*` and `api.*` are routed through HTTPS host/path rules. Browser applications should use the **public API base URL**, not internal container hostnames. Domain setup and certificate validation must be completed before treating endpoints as live.
+
+## 🧩 Applications & Services
+
+### Frontend applications
+
+| Application | Local URL | Purpose |
+|:--|:--|:--|
+| 🔐 Auth App | http://localhost:9000 | Login, registration, role-based redirects |
+| 🛒 Customer App | http://localhost:9001 | Browse, order, checkout and track |
+| 🍽️ Restaurant App | http://localhost:9002 | Menu and order management |
+| 🛵 Delivery App | http://localhost:9003 | Accept and update deliveries |
+| 🛡️ Admin Panel | http://localhost:9004 | Restaurant, food and order administration |
+
+### Backend microservices
+
+| Service | Local Port | Responsibility |
+|:--|:--:|:--|
+| 📦 Order Service | `4000` | Order creation and status changes |
+| 💳 Payment Service | `4001` | **Simulated** payment processing |
+| 📍 Tracking Service | `4002` | Socket.IO location updates |
+| 🔑 Auth Service | `4003` | Authentication, roles and profiles |
+| 🍜 Catalog Service | `4004` | Restaurants, menu items and images |
+
+**Database:** PostgreSQL on port `5432` in the local environment.
+
+---
+
+## 🛠️ Technology Stack
+
+<div align="center">
+
+| Layer | Technologies |
+|:--|:--|
+| **Frontend** | React, Vite |
+| **Backend** | Node.js, Express, Socket.IO, JWT, bcrypt |
+| **Data & assets** | PostgreSQL / Amazon RDS, Amazon S3 |
+| **Containers** | Docker, Docker Compose, Amazon ECR |
+| **Cloud runtime** | Amazon ECS Fargate, Application Load Balancer |
+| **CI/CD & IaC** | Jenkins, AWS CloudFormation, Ansible |
+| **Networking & security** | Route 53, ACM, IAM, Secrets Manager |
+| **Events & observability** | SNS, Lambda, CloudWatch, CloudTrail |
+| **Optional learning path** | Kubernetes / Amazon EKS manifests |
+
+</div>
+
+## 🔄 CI/CD & AWS Deployment
+
+```mermaid
+flowchart LR
+    A[GitHub Code] --> B[Jenkins Pipeline]
+    B --> C[Build & Test]
+    C --> D[Docker Images]
+    D --> E[Amazon ECR]
+    E --> F[Amazon ECS Fargate]
+    F --> G[ALB / HTTPS]
+    G --> H[Smoke Tests]
+    classDef stage fill:#102f57,color:#ffffff,stroke:#22d3ee,stroke-width:1.5px
+    class A,B,C,D,E,F,G,H stage
+```
+
+The repository documents a Jenkins-based workflow for building application images, pushing them to ECR and deploying ECS services. **Validate the actual Jenkinsfile and target AWS resources before running a deployment.** Infrastructure templates live under `infrastructure/cloudformation/`.
+
+<details>
+<summary><b>📁 Explore the project structure</b></summary>
+
+```text
+food-delivery-platform/
+├── apps/
+│   ├── auth-app/
+│   ├── customer-app/
+│   ├── restaurant-app/
+│   ├── delivery-app/
+│   └── admin-panel/
+├── services/
+│   ├── auth-service/
+│   ├── catalog-service/
+│   ├── order-service/
+│   ├── payment-service/
+│   └── tracking-service/
+├── lambda/
+│   └── order-notifier/
+├── infrastructure/
+│   ├── cloudformation/
+│   ├── jenkins/
+│   ├── ansible/
+│   └── k8s/                # Optional EKS path
+├── docker-compose.yml
+└── README.md
+```
+
+</details>
+
+---
+
+## 🚀 Quick Start
+
+**Prerequisites:** Docker Engine / Docker Desktop and Docker Compose, with sufficient resources to run the local stack.
 
 ```bash
+# From the repository root
 docker compose build
 docker compose up -d
 docker compose ps
 ```
 
-### Functional flow
+Open **http://localhost:9000** to begin with the authentication app. Use `docker compose logs -f` to troubleshoot startup issues.
 
-1. Open Auth at `http://localhost:9000`.
-2. Register a CUSTOMER, RESTAURANT, and DELIVERY account.
-3. Log in as CUSTOMER and place an order.
-4. Log in as RESTAURANT and advance the order: `PLACED -> ACCEPTED -> PREPARING -> OUT_FOR_DELIVERY`.
-5. Log in as DELIVERY, accept the delivery, start location sharing, and mark it delivered.
-6. The customer page polls the order and receives live Socket.IO location updates.
-7. Provision an ADMIN account for the local test and log in through Auth to reach `http://localhost:9004`.
+> [!CAUTION]
+> `docker compose down -v` **deletes named-volume data**, including local database data. Do not use it unless you intentionally want to reset your demo environment.
 
-### Provision a local admin
+### Local admin provisioning
 
-Admin registration is intentionally disabled. With the stack running, use PowerShell: 
+Admin self-registration is disabled. The original documentation includes both a scripted provisioning approach and an older example with different credentials; **do not rely on hard-coded sample passwords**. Check the active Compose configuration and auth-service provisioning script. Where the script is available, a PowerShell example is:
 
 ```powershell
-docker compose exec -e ADMIN_EMAIL=admin@fooddelivery.local -e ADMIN_PASSWORD='Admin123!' auth-service node src/scripts/provision-local-admin.js
+$env:ADMIN_EMAIL = "admin@fooddelivery.local"
+$env:ADMIN_PASSWORD = "<choose-a-strong-local-test-password>"
+docker compose exec -e ADMIN_EMAIL=$env:ADMIN_EMAIL -e ADMIN_PASSWORD=$env:ADMIN_PASSWORD auth-service node src/scripts/provision-local-admin.js
 ```
 
-Then open `http://localhost:9000` and log in with those credentials.
+Do not commit credentials, `.env` files, AWS keys or real customer information.
 
-> For production, use a secret manager and a controlled admin provisioning process instead of the example local password.
+## 🧪 End-to-End Test Flow
 
+1. **Register** customer, restaurant and delivery accounts from the auth app.
+2. **Customer:** browse the catalog and place an order.
+3. **Restaurant:** progress the order through `PLACED → ACCEPTED → PREPARING → OUT_FOR_DELIVERY`.
+4. **Delivery:** accept the delivery, start location sharing and mark it delivered.
+5. **Customer:** verify order status and live location updates via Socket.IO.
+6. **Admin:** inspect orders and manage restaurants and food items.
 
-A real-time food delivery platform built with a microservices backend, four
-React frontends, and a full AWS DevOps deployment stack (VPC, ALB, ECS Fargate, optional EKS/Kubernetes,
-Lambda, CloudWatch, CloudTrail, CloudFormation, Route 53, Jenkins, Ansible, RDS, S3, SNS, IAM).
+The local demo restaurant UUID documented in the original project is `11111111-1111-1111-1111-111111111111`.
 
-## What's included
+<details>
+<summary><b>💳 View safe test payment scenarios</b></summary>
 
-```
-food-delivery-platform/
-├── apps/                        # 4 React (Vite) frontends
-│   ├── customer-app/            # browse menu, place order, pay, track delivery live
-│   ├── restaurant-app/          # view incoming orders, advance status
-│   ├── delivery-app/            # accept deliveries, broadcast live GPS
-│   └── admin-panel/             # order overview, revenue, filters
-├── services/                    # Backend microservices (Node.js/Express)
-│   ├── order-service/           # orders CRUD + status, Postgres/RDS, SNS events
-│   ├── payment-service/         # dummy payment gateway
-│   └── tracking-service/        # WebSocket live location tracking
-├── lambda/order-notifier/       # SNS-triggered Lambda for order notifications
-├── infrastructure/
-│   ├── cloudformation/          # VPC, ALB, RDS, S3, SNS/Lambda, ECR, ECS, CloudWatch,
-│   │                             CloudTrail, Route 53 — nested stacks, root: main-stack.yaml
-│   ├── k8s/                     # Optional EKS manifests
-│   ├── jenkins/Jenkinsfile      # CI/CD: build → test → ECR push → ECS Fargate deploy
-│   └── ansible/                 # Configures backend EC2 servers (Docker install, app deploy)
-└── docker-compose.yml           # Run the whole stack locally in one command
-```
+The payment service is a **simulation only**. It checks order amounts and can transition `REQUIRES_CONFIRMATION → PROCESSING → SUCCEEDED / FAILED`, generate `TEST-TXN-...` references, and simulate retry/refund scenarios. Only masked last-four card digits are retained according to the project documentation.
 
+| Test card | Simulated result |
+|:--|:--|
+| `4242 4242 4242 4242` | Success |
+| `4000 0000 0000 0002` | Declined |
+| `4000 0000 0000 9995` | Insufficient funds |
+| `4000 0000 0000 9987` | Processing error |
 
-## Updated application workflow
+**TEST MODE — NO REAL PAYMENT.** Use these numbers only with the local mock payment service.
 
-The four existing frontends remain separate applications. The only workflow change is a new central authentication entry point:
+</details>
 
-```text
-LOGIN / REGISTER
-       |
-       v
-Authentication Service (JWT + bcrypt)
-       |
-   Check role
-   /    |     \
-  v     v      v
-Customer Restaurant Delivery
-  |        |       |
-  v        v       v
-Customer  Restaurant Delivery
-  App       App      App
-   \        |       /
-        Backend Services
-             |
-      Order / Payment / Tracking
-             |
-          Database
-             ^
-             |
-         Admin Panel
-```
+<details>
+<summary><b>🧭 Deployment notes and current limitations</b></summary>
 
-Local authentication entry point:
-- Auth app: http://localhost:9000
-- Auth API: http://localhost:4003
+- **Default compute:** ECS Fargate for **five frontends and five backends**; EKS files are optional and may represent an earlier deployment design.
+- **Real-time tracking:** location state is stored in memory in the documented version. One tracking task avoids state divergence; Redis or another shared store would be needed before horizontally scaling it.
+- **Notifications:** the source documentation notes a placeholder Lambda in one deployment template; verify that the real `lambda/order-notifier/` code is packaged and deployed.
+- **Images:** local catalog and auth uploads use Docker volumes; AWS S3 integration must be validated in the deployed environment.
+- **Domain & HTTPS:** configure Route 53, ACM DNS validation and ALB routing. Do not treat example hostnames as working links.
+- **Production readiness:** confirm IAM least privilege, secret handling, database access, health checks, logs, smoke tests and rollback before production use.
 
-After login, the central auth app redirects the user to the correct existing app:
-- CUSTOMER → http://localhost:9001
-- RESTAURANT → http://localhost:9002
-- DELIVERY → http://localhost:9003
-- ADMIN → http://localhost:9004
+</details>
 
-The existing order, payment, tracking, Lambda, infrastructure and deployment files are otherwise preserved. The new auth layer is additive; it does not replace the existing business services.
+---
 
-## Architecture
+## 📚 Documentation
 
-```
-Route 53 → Application Load Balancer → Frontend (ECS Fargate: customer/restaurant/delivery/admin)
-                                       → Backend microservices (EKS/Kubernetes: order, payment, tracking)
-                                            → RDS (Postgres, orders)
-                                            → S3 (food images)
-                                       → CloudWatch + CloudTrail + Lambda (SNS-triggered notifications)
-```
+| Document | Why read it |
+|:--|:--|
+| [`AWS-DEPLOYMENT-GUIDE-FIXED.md`](AWS-DEPLOYMENT-GUIDE-FIXED.md) | Corrected AWS deployment walkthrough |
+| [`AWS-DEPLOYMENT-GUIDE.md`](AWS-DEPLOYMENT-GUIDE.md) | Additional deployment background; compare against corrected guide |
+| [`FIX-REPORT.md`](FIX-REPORT.md) | Documented deployment and application fixes |
+| [`infrastructure/jenkins/Jenkinsfile`](infrastructure/jenkins/Jenkinsfile) | Jenkins pipeline definition |
+| [`infrastructure/cloudformation/`](infrastructure/cloudformation/) | Infrastructure as Code templates |
 
-## Run it locally (no AWS needed)
+*Some documentation links require the corresponding files to exist in your GitHub repository.*
 
-Requires Docker + Docker Compose.
+---
 
-```bash
-docker compose up --build
-```
+<div align="center">
 
-Then open:
-- Customer app: http://localhost:9001
-- Restaurant app: http://localhost:9002
-- Delivery app: http://localhost:9003
-- Admin panel: http://localhost:9004
-- Order service API: http://localhost:4000/api/orders
-- Payment service API: http://localhost:4001/api/payments
-- Tracking service (WebSocket): http://localhost:4002
+### 🌐 From Code to Cloud
 
-**Demo flow:** place an order in the customer app → it's charged automatically via the
-dummy payment service → open the restaurant app to accept/advance it → once it's
-"Out for delivery", open the delivery app, accept it, and click "Start sharing location"
-→ back in the customer app you'll see the live coordinates update over WebSocket → open
-the admin panel to see it all in the order table.
+**Plan → Build → Test → Containerize → Automate → Deploy → Observe**
 
-## Run services individually (dev mode)
+<a href="https://www.linkedin.com/in/keerthivasan-d-awsdevops/"><img src="https://img.shields.io/badge/Connect_on_LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn" /></a>
 
-Each service/app has its own `package.json`. Example:
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:00c9a7,55:0754a7,100:07152e&height=115&section=footer" alt="Footer wave" width="100%" />
 
-```bash
-cd services/order-service
-cp .env.example .env      # point at a local Postgres
-npm install
-npm run dev
-```
+<sub>Built as a hands-on AWS & DevOps learning and portfolio project.</sub>
 
-## Deploying to AWS
-
-1. **Provision infrastructure** — upload the templates in `infrastructure/cloudformation/`
-   to an S3 bucket, then deploy the root stack:
-   ```bash
-   aws cloudformation deploy \
-     --template-file infrastructure/cloudformation/main-stack.yaml \
-     --stack-name food-delivery \
-     --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides TemplateBucket=<your-templates-bucket> DBPassword=<secret>
-   ```
-   This provisions the VPC, subnets, NAT/IGW, security groups, ALB, RDS, S3, SNS + Lambda,
-   ECR repos, the ECS Fargate frontend service, and CloudTrail. Deploy
-   `infrastructure/cloudformation/cloudwatch-monitoring.yaml` and `route53.yaml` separately
-   once you have your ALB DNS name / hosted zone ID.
-
-2. **Create an EKS cluster** (e.g. via `eksctl`) in the VPC created above, install the
-   AWS Load Balancer Controller, then apply:
-   ```bash
-   kubectl apply -f infrastructure/k8s/namespace.yaml
-   kubectl apply -f infrastructure/k8s/order-service-secrets.example.yaml   # fill in real values first
-   kubectl apply -f infrastructure/k8s/
-   ```
-
-3. **Configure Jenkins** with AWS credentials and point it at `infrastructure/jenkins/Jenkinsfile`.
-   The pipeline builds every service/app, pushes images to ECR, rolls out the backend to
-   EKS (`kubectl set image` + `rollout status`), force-redeploys the ECS frontend service,
-   optionally triggers CodeDeploy for blue-green/canary, runs a smoke test, and automatically
-   runs `kubectl rollout undo` on failure.
-
-4. **Configure remaining backend EC2 servers** (if not fully containerized on EKS) with:
-   ```bash
-   cd infrastructure/ansible
-   ansible-playbook -i inventory.ini site.yml --ask-vault-pass
-   ```
-
-## Notes on the "Advanced Add-ons"
-
-- **Blue-green / canary**: the ALB template provisions a second ("green") target group,
-  and the Jenkinsfile has a dedicated stage that invokes CodeDeploy when you pass
-  `DEPLOY_STRATEGY=blue-green` or `canary`. You'll need to create the CodeDeploy
-  application/deployment group referenced there.
-- **Horizontal Pod Autoscaling**: `order-service-deployment.yaml` includes an HPA scaling
-  2–10 pods on CPU.
-- **EC2 Auto Scaling / ECS auto scaling**: `ecs-frontend.yaml` includes an
-  `ApplicationAutoScaling::ScalableTarget` + target-tracking policy on CPU.
-- **CloudWatch dashboard**: `cloudwatch-monitoring.yaml`.
-- **Jenkins rollback stage**: see the `post { failure { ... } }` block in the Jenkinsfile.
-- **Ansible inventory for multiple servers**: `infrastructure/ansible/inventory.ini` (static)
-  and `aws_ec2.yaml` (dynamic, tag-based).
-- **CloudFormation nested stacks**: `main-stack.yaml` composes all the other templates.
-
-## Honest limitations / what you'll still need to fill in
-
-- Payment service runs in **SAFE TEST MODE**: it simulates realistic payment intents, processing, approvals/declines, retries and refunds without contacting any real payment processor. Full card numbers and CVVs are never stored. Use only the documented test cards.
-- The Lambda in `main-stack.yaml` deploys a placeholder inline stub; the real code lives in
-  `lambda/order-notifier/` — package and push it via `aws lambda update-function-code`
-  (the Jenkinsfile is a good place to add that step).
-- No auth/JWT layer is included — every service trusts the caller-supplied IDs. Add an
-  auth service or API Gateway authorizer before going to production.
-- Domain names, ECR account IDs, and ARNs throughout are placeholders — replace before deploying.
-
-
-## Corrected AWS architecture (default path)
-
-The project now uses **ECS Fargate as the default runtime for all nine containers**:
-
-- auth-app
-- customer-app
-- restaurant-app
-- delivery-app
-- admin-panel
-- auth-service
-- order-service
-- payment-service
-- tracking-service
-
-The ALB routes `auth.*`, `customer.*`, `restaurant.*`, `delivery.*`, `admin.*`, and `api.*` traffic to the correct target groups. Backend APIs are routed by `/api/auth`, `/api/orders`, `/api/payments`, and `/api/tracking`.
-
-The ECR stack now contains repositories for all nine images. The Jenkins pipeline builds and deploys all nine services to ECS; it no longer requires an EKS cluster for the default deployment. The Kubernetes files remain as an optional advanced deployment path.
-
-### EC2 requirement
-
-ECS Fargate, RDS PostgreSQL, ALB, ECR, S3, SNS, and Lambda do not require you to create application EC2 instances. For the recommended CI/CD setup, create **one EC2 instance only for Jenkins**. You can also use GitHub Actions and create **zero EC2 instances**.
-
-### Production API configuration
-
-The frontend Dockerfiles now accept Vite build arguments for production URLs. The application code appends its API paths, so set the base API URL to `http://api.<your-domain>` rather than including `/api/orders` or `/api/auth` in the variable value.
-
-### Tracking note
-
-The tracking service currently stores live locations in memory. The ECS deployment therefore starts one tracking task to avoid cross-task state divergence. For production high availability, move this state to ElastiCache Redis and then increase the service count.
-
-## UI/CRUD upgrade (August 2026)
-
-This version adds the requested admin, customer-profile, food-image and navigation work.
-
-### Admin login
-- URL: http://localhost:9000
-- Email: `admin@fooddelivery.local`
-- Password: `Admin@12345`
-- The auth service provisions this local admin automatically from `docker-compose.yml`.
-
-### Admin panel
-Open http://localhost:9004 after logging in as ADMIN.
-- Restaurants: add, edit, delete, upload restaurant image, open/close restaurant.
-- Food CRUD: add, edit, delete, change price, enable/disable, upload food image.
-- Orders: platform-wide order view with ordered-food images.
-
-### Customer app
-Open http://localhost:9001 after logging in as CUSTOMER.
-- Restaurant listing and restaurant details.
-- Food cards with images, price and availability.
-- Cart and test checkout.
-- Profile Management: name, email, mobile, profile photo, multiple addresses.
-- Change password.
-- Order history with food images.
-- BrowserRouter navigation for Home / Restaurant / Checkout / Orders / Profile, so browser Back and Forward work normally.
-
-### Restaurant app
-Open http://localhost:9002 after logging in as RESTAURANT.
-- Dashboard, menu and incoming orders.
-- Ordered food images are shown in every order.
-- Order status progression remains available.
-- Browser Back/Forward works through real application routes.
-
-### New service
-`catalog-service` runs on port `4004` and stores restaurants, menu items and uploaded restaurant/food images. Uploaded images are persisted in the Docker `catalog_uploads` volume.
-
-`auth-service` now stores mobile, profile photo and saved addresses and exposes profile/password/photo APIs. Profile photos are persisted in the Docker `auth_uploads` volume.
-
-### First clean run
-Because the PostgreSQL database uses a named volume, if an older copy of this project is already running, use:
-
-```bash
-docker compose down -v
-docker compose up --build
-```
-
-Use `down -v` only when you are okay with deleting the local demo PostgreSQL data. For an existing environment where data must be preserved, run the services normally; both auth and catalog services also perform their own startup migrations.
-
-### URLs
-- Auth: http://localhost:9000
-- Customer: http://localhost:9001
-- Restaurant: http://localhost:9002
-- Delivery: http://localhost:9003
-- Admin: http://localhost:9004
-- Auth API: http://localhost:4003
-- Order API: http://localhost:4000
-- Payment API: http://localhost:4001
-- Tracking API: http://localhost:4002
-- Catalog API: http://localhost:4004
-
-## Fixed AWS deployment
-
-For the corrected beginner-friendly AWS deployment, start with:
-
-**`AWS-DEPLOYMENT-GUIDE-FIXED.md`**
-
-The guide matches the current infrastructure files and deploys all 10 application containers through ECS Fargate behind an HTTPS ALB, with RDS PostgreSQL, S3, Secrets Manager, SNS/Lambda, CloudWatch, CloudTrail and Route 53.
+</div>
